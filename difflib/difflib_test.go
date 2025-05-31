@@ -102,7 +102,7 @@ group
 	}
 }
 
-func ExampleGetUnifiedDiffCode() {
+func ExampleGetUnifiedDiffString() {
 	a := `one
 two
 three
@@ -135,7 +135,7 @@ four`
 	// -fmt.Printf("%s,%T",a,b)
 }
 
-func ExampleGetContextDiffCode() {
+func ExampleGetContextDiffString() {
 	a := `one
 two
 three
@@ -165,41 +165,6 @@ four`
 	// ! three
 	//   four
 	// - fmt.Printf("%s,%T",a,b)
-	// --- 1,4 ----
-	// + zero
-	//   one
-	// ! tree
-	//   four
-}
-
-func ExampleGetContextDiffString() {
-	a := `one
-two
-three
-four`
-	b := `zero
-one
-tree
-four`
-	diff := ContextDiff{
-		A:        SplitLines(a),
-		B:        SplitLines(b),
-		FromFile: "Original",
-		ToFile:   "Current",
-		Context:  3,
-		Eol:      "\n",
-	}
-	result, _ := GetContextDiffString(diff)
-	fmt.Printf(strings.Replace(result, "\t", " ", -1))
-	// Output:
-	// *** Original
-	// --- Current
-	// ***************
-	// *** 1,4 ****
-	//   one
-	// ! two
-	// ! three
-	//   four
 	// --- 1,4 ----
 	// + zero
 	//   one

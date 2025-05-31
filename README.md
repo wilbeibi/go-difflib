@@ -23,6 +23,10 @@ The following class and functions (and related tests) have be ported:
 $ go get github.com/pmezard/go-difflib/difflib
 ```
 
+### Requirements
+
+* Go 1.21 or later
+
 ### Quick Start
 
 Diffs are configured with Unified (or ContextDiff) structures, and can

@@ -13,29 +13,15 @@
 // Getting unified diffs was the main goal of the port. Keep in mind this code
 // is mostly suitable to output text differences in a human friendly way, there
 // are no guarantees generated diffs are consumable by patch(1).
+//
+// Requires Go 1.21 or later.
 package difflib
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"strings"
 )
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
 
 func calculateRatio(matches, length int) float64 {
 	if length > 0 {
@@ -98,17 +84,19 @@ type SequenceMatcher struct {
 }
 
 func NewMatcher(a, b []string) *SequenceMatcher {
-	m := SequenceMatcher{autoJunk: true}
+	m := &SequenceMatcher{autoJunk: true}
 	m.SetSeqs(a, b)
-	return &m
+	return m
 }
 
 func NewMatcherWithJunk(a, b []string, autoJunk bool,
 	isJunk func(string) bool) *SequenceMatcher {
-
-	m := SequenceMatcher{IsJunk: isJunk, autoJunk: autoJunk}
+	m := &SequenceMatcher{
+		IsJunk:   isJunk,
+		autoJunk: autoJunk,
+	}
 	m.SetSeqs(a, b)
-	return &m
+	return m
 }
 
 // Set two sequences to be compared.
@@ -150,29 +138,26 @@ func (m *SequenceMatcher) SetSeq2(b []string) {
 
 func (m *SequenceMatcher) chainB() {
 	// Populate line -> index mapping
-	b2j := map[string][]int{}
+	b2j := make(map[string][]int)
 	for i, s := range m.b {
-		indices := b2j[s]
-		indices = append(indices, i)
-		b2j[s] = indices
+		b2j[s] = append(b2j[s], i)
 	}
 
 	// Purge junk elements
-	m.bJunk = map[string]struct{}{}
+	m.bJunk = make(map[string]struct{})
 	if m.IsJunk != nil {
-		junk := m.bJunk
-		for s, _ := range b2j {
+		for s := range b2j {
 			if m.IsJunk(s) {
-				junk[s] = struct{}{}
+				m.bJunk[s] = struct{}{}
 			}
 		}
-		for s, _ := range junk {
+		for s := range m.bJunk {
 			delete(b2j, s)
 		}
 	}
 
 	// Purge remaining popular elements
-	popular := map[string]struct{}{}
+	popular := make(map[string]struct{})
 	n := len(m.b)
 	if m.autoJunk && n >= 200 {
 		ntest := n/100 + 1
@@ -181,7 +166,7 @@ func (m *SequenceMatcher) chainB() {
 				popular[s] = struct{}{}
 			}
 		}
-		for s, _ := range popular {
+		for s := range popular {
 			delete(b2j, s)
 		}
 	}
@@ -199,12 +184,15 @@ func (m *SequenceMatcher) isBJunk(s string) bool {
 // If IsJunk is not defined:
 //
 // Return (i,j,k) such that a[i:i+k] is equal to b[j:j+k], where
-//     alo <= i <= i+k <= ahi
-//     blo <= j <= j+k <= bhi
+//
+//	alo <= i <= i+k <= ahi
+//	blo <= j <= j+k <= bhi
+//
 // and for all (i',j',k') meeting those conditions,
-//     k >= k'
-//     i <= i'
-//     and if i == i', j <= j'
+//
+//	k >= k'
+//	i <= i'
+//	and if i == i', j <= j'
 //
 // In other words, of all maximal matching blocks, return one that
 // starts earliest in a, and of all those maximal matching blocks that
@@ -235,11 +223,11 @@ func (m *SequenceMatcher) findLongestMatch(alo, ahi, blo, bhi int) Match {
 	// find longest junk-free match
 	// during an iteration of the loop, j2len[j] = length of longest
 	// junk-free match ending with a[i-1] and b[j]
-	j2len := map[int]int{}
+	j2len := make(map[int]int)
 	for i := alo; i != ahi; i++ {
 		// look at all instances of a[i] in b; note that because
 		// b2j has no junk keys, the loop is skipped if a[i] is junk
-		newj2len := map[int]int{}
+		newj2len := make(map[int]int)
 		for _, j := range m.b2j[m.a[i]] {
 			// a[i] matches b[j]
 			if j < blo {
@@ -341,16 +329,16 @@ func (m *SequenceMatcher) GetMatchingBlocks() []Match {
 			// the dummy we started with), and make the second block the
 			// new block to compare against.
 			if k1 > 0 {
-				nonAdjacent = append(nonAdjacent, Match{i1, j1, k1})
+				nonAdjacent = append(nonAdjacent, Match{A: i1, B: j1, Size: k1})
 			}
 			i1, j1, k1 = i2, j2, k2
 		}
 	}
 	if k1 > 0 {
-		nonAdjacent = append(nonAdjacent, Match{i1, j1, k1})
+		nonAdjacent = append(nonAdjacent, Match{A: i1, B: j1, Size: k1})
 	}
 
-	nonAdjacent = append(nonAdjacent, Match{len(m.a), len(m.b), 0})
+	nonAdjacent = append(nonAdjacent, Match{A: len(m.a), B: len(m.b), Size: 0})
 	m.matchingBlocks = nonAdjacent
 	return m.matchingBlocks
 }
@@ -393,13 +381,13 @@ func (m *SequenceMatcher) GetOpCodes() []OpCode {
 			tag = 'i'
 		}
 		if tag > 0 {
-			opCodes = append(opCodes, OpCode{tag, i, ai, j, bj})
+			opCodes = append(opCodes, OpCode{Tag: tag, I1: i, I2: ai, J1: j, J2: bj})
 		}
 		i, j = ai+size, bj+size
 		// the list of matching blocks is terminated by a
 		// sentinel with size 0
 		if size > 0 {
-			opCodes = append(opCodes, OpCode{'e', ai, i, bj, j})
+			opCodes = append(opCodes, OpCode{Tag: 'e', I1: ai, I2: i, J1: bj, J2: j})
 		}
 	}
 	m.opCodes = opCodes
@@ -416,34 +404,34 @@ func (m *SequenceMatcher) GetGroupedOpCodes(n int) [][]OpCode {
 	}
 	codes := m.GetOpCodes()
 	if len(codes) == 0 {
-		codes = []OpCode{OpCode{'e', 0, 1, 0, 1}}
+		codes = []OpCode{{Tag: 'e', I1: 0, I2: 1, J1: 0, J2: 1}}
 	}
 	// Fixup leading and trailing groups if they show no changes.
 	if codes[0].Tag == 'e' {
 		c := codes[0]
 		i1, i2, j1, j2 := c.I1, c.I2, c.J1, c.J2
-		codes[0] = OpCode{c.Tag, max(i1, i2-n), i2, max(j1, j2-n), j2}
+		codes[0] = OpCode{Tag: c.Tag, I1: max(i1, i2-n), I2: i2, J1: max(j1, j2-n), J2: j2}
 	}
 	if codes[len(codes)-1].Tag == 'e' {
 		c := codes[len(codes)-1]
 		i1, i2, j1, j2 := c.I1, c.I2, c.J1, c.J2
-		codes[len(codes)-1] = OpCode{c.Tag, i1, min(i2, i1+n), j1, min(j2, j1+n)}
+		codes[len(codes)-1] = OpCode{Tag: c.Tag, I1: i1, I2: min(i2, i1+n), J1: j1, J2: min(j2, j1+n)}
 	}
 	nn := n + n
-	groups := [][]OpCode{}
-	group := []OpCode{}
+	var groups [][]OpCode
+	var group []OpCode
 	for _, c := range codes {
 		i1, i2, j1, j2 := c.I1, c.I2, c.J1, c.J2
 		// End the current group and start a new one whenever
 		// there is a large range with no changes.
 		if c.Tag == 'e' && i2-i1 > nn {
-			group = append(group, OpCode{c.Tag, i1, min(i2, i1+n),
-				j1, min(j2, j1+n)})
+			group = append(group, OpCode{Tag: c.Tag, I1: i1, I2: min(i2, i1+n),
+				J1: j1, J2: min(j2, j1+n)})
 			groups = append(groups, group)
-			group = []OpCode{}
+			group = nil
 			i1, j1 = max(i1, i2-n), max(j1, j2-n)
 		}
-		group = append(group, OpCode{c.Tag, i1, i2, j1, j2})
+		group = append(group, OpCode{Tag: c.Tag, I1: i1, I2: i2, J1: j1, J2: j2})
 	}
 	if len(group) > 0 && !(len(group) == 1 && group[0].Tag == 'e') {
 		groups = append(groups, group)
@@ -479,15 +467,15 @@ func (m *SequenceMatcher) QuickRatio() float64 {
 	// of their intersection; this counts the number of matches
 	// without regard to order, so is clearly an upper bound
 	if m.fullBCount == nil {
-		m.fullBCount = map[string]int{}
+		m.fullBCount = make(map[string]int)
 		for _, s := range m.b {
-			m.fullBCount[s] = m.fullBCount[s] + 1
+			m.fullBCount[s]++
 		}
 	}
 
 	// avail[x] is the number of times x appears in 'b' less the
 	// number of times we've seen it in 'a' so far ... kinda
-	avail := map[string]int{}
+	avail := make(map[string]int)
 	matches := 0
 	for _, s := range m.a {
 		n, ok := avail[s]
@@ -496,7 +484,7 @@ func (m *SequenceMatcher) QuickRatio() float64 {
 		}
 		avail[s] = n - 1
 		if n > 0 {
-			matches += 1
+			matches++
 		}
 	}
 	return calculateRatio(matches, len(m.a)+len(m.b))
@@ -557,17 +545,6 @@ type UnifiedDiff struct {
 // 'fromfile', 'tofile', 'fromfiledate', and 'tofiledate'.
 // The modification times are normally expressed in the ISO 8601 format.
 func WriteUnifiedDiff(writer io.Writer, diff UnifiedDiff) error {
-	buf := bufio.NewWriter(writer)
-	defer buf.Flush()
-	wf := func(format string, args ...interface{}) error {
-		_, err := buf.WriteString(fmt.Sprintf(format, args...))
-		return err
-	}
-	ws := func(s string) error {
-		_, err := buf.WriteString(s)
-		return err
-	}
-
 	if len(diff.Eol) == 0 {
 		diff.Eol = "\n"
 	}
@@ -586,12 +563,10 @@ func WriteUnifiedDiff(writer io.Writer, diff UnifiedDiff) error {
 				toDate = "\t" + diff.ToDate
 			}
 			if diff.FromFile != "" || diff.ToFile != "" {
-				err := wf("--- %s%s%s", diff.FromFile, fromDate, diff.Eol)
-				if err != nil {
+				if _, err := fmt.Fprintf(writer, "--- %s%s%s", diff.FromFile, fromDate, diff.Eol); err != nil {
 					return err
 				}
-				err = wf("+++ %s%s%s", diff.ToFile, toDate, diff.Eol)
-				if err != nil {
+				if _, err := fmt.Fprintf(writer, "+++ %s%s%s", diff.ToFile, toDate, diff.Eol); err != nil {
 					return err
 				}
 			}
@@ -599,14 +574,14 @@ func WriteUnifiedDiff(writer io.Writer, diff UnifiedDiff) error {
 		first, last := g[0], g[len(g)-1]
 		range1 := formatRangeUnified(first.I1, last.I2)
 		range2 := formatRangeUnified(first.J1, last.J2)
-		if err := wf("@@ -%s +%s @@%s", range1, range2, diff.Eol); err != nil {
+		if _, err := fmt.Fprintf(writer, "@@ -%s +%s @@%s", range1, range2, diff.Eol); err != nil {
 			return err
 		}
 		for _, c := range g {
 			i1, i2, j1, j2 := c.I1, c.I2, c.J1, c.J2
 			if c.Tag == 'e' {
 				for _, line := range diff.A[i1:i2] {
-					if err := ws(" " + line); err != nil {
+					if _, err := io.WriteString(writer, " "+line); err != nil {
 						return err
 					}
 				}
@@ -614,14 +589,14 @@ func WriteUnifiedDiff(writer io.Writer, diff UnifiedDiff) error {
 			}
 			if c.Tag == 'r' || c.Tag == 'd' {
 				for _, line := range diff.A[i1:i2] {
-					if err := ws("-" + line); err != nil {
+					if _, err := io.WriteString(writer, "-"+line); err != nil {
 						return err
 					}
 				}
 			}
 			if c.Tag == 'r' || c.Tag == 'i' {
 				for _, line := range diff.B[j1:j2] {
-					if err := ws("+" + line); err != nil {
+					if _, err := io.WriteString(writer, "+"+line); err != nil {
 						return err
 					}
 				}
@@ -633,9 +608,9 @@ func WriteUnifiedDiff(writer io.Writer, diff UnifiedDiff) error {
 
 // Like WriteUnifiedDiff but returns the diff a string.
 func GetUnifiedDiffString(diff UnifiedDiff) (string, error) {
-	w := &bytes.Buffer{}
-	err := WriteUnifiedDiff(w, diff)
-	return string(w.Bytes()), err
+	var sb strings.Builder
+	err := WriteUnifiedDiff(&sb, diff)
+	return sb.String(), err
 }
 
 // Convert range to the "ed" format.
@@ -672,31 +647,15 @@ type ContextDiff UnifiedDiff
 // The modification times are normally expressed in the ISO 8601 format.
 // If not specified, the strings default to blanks.
 func WriteContextDiff(writer io.Writer, diff ContextDiff) error {
-	buf := bufio.NewWriter(writer)
-	defer buf.Flush()
-	var diffErr error
-	wf := func(format string, args ...interface{}) {
-		_, err := buf.WriteString(fmt.Sprintf(format, args...))
-		if diffErr == nil && err != nil {
-			diffErr = err
-		}
-	}
-	ws := func(s string) {
-		_, err := buf.WriteString(s)
-		if diffErr == nil && err != nil {
-			diffErr = err
-		}
-	}
-
-	if len(diff.Eol) == 0 {
-		diff.Eol = "\n"
-	}
-
 	prefix := map[byte]string{
 		'i': "+ ",
 		'd': "- ",
 		'r': "! ",
 		'e': "  ",
+	}
+
+	if len(diff.Eol) == 0 {
+		diff.Eol = "\n"
 	}
 
 	started := false
@@ -713,16 +672,24 @@ func WriteContextDiff(writer io.Writer, diff ContextDiff) error {
 				toDate = "\t" + diff.ToDate
 			}
 			if diff.FromFile != "" || diff.ToFile != "" {
-				wf("*** %s%s%s", diff.FromFile, fromDate, diff.Eol)
-				wf("--- %s%s%s", diff.ToFile, toDate, diff.Eol)
+				if _, err := fmt.Fprintf(writer, "*** %s%s%s", diff.FromFile, fromDate, diff.Eol); err != nil {
+					return err
+				}
+				if _, err := fmt.Fprintf(writer, "--- %s%s%s", diff.ToFile, toDate, diff.Eol); err != nil {
+					return err
+				}
 			}
 		}
 
 		first, last := g[0], g[len(g)-1]
-		ws("***************" + diff.Eol)
+		if _, err := io.WriteString(writer, "***************"+diff.Eol); err != nil {
+			return err
+		}
 
 		range1 := formatRangeContext(first.I1, last.I2)
-		wf("*** %s ****%s", range1, diff.Eol)
+		if _, err := fmt.Fprintf(writer, "*** %s ****%s", range1, diff.Eol); err != nil {
+			return err
+		}
 		for _, c := range g {
 			if c.Tag == 'r' || c.Tag == 'd' {
 				for _, cc := range g {
@@ -730,7 +697,9 @@ func WriteContextDiff(writer io.Writer, diff ContextDiff) error {
 						continue
 					}
 					for _, line := range diff.A[cc.I1:cc.I2] {
-						ws(prefix[cc.Tag] + line)
+						if _, err := io.WriteString(writer, prefix[cc.Tag]+line); err != nil {
+							return err
+						}
 					}
 				}
 				break
@@ -738,7 +707,9 @@ func WriteContextDiff(writer io.Writer, diff ContextDiff) error {
 		}
 
 		range2 := formatRangeContext(first.J1, last.J2)
-		wf("--- %s ----%s", range2, diff.Eol)
+		if _, err := fmt.Fprintf(writer, "--- %s ----%s", range2, diff.Eol); err != nil {
+			return err
+		}
 		for _, c := range g {
 			if c.Tag == 'r' || c.Tag == 'i' {
 				for _, cc := range g {
@@ -746,27 +717,35 @@ func WriteContextDiff(writer io.Writer, diff ContextDiff) error {
 						continue
 					}
 					for _, line := range diff.B[cc.J1:cc.J2] {
-						ws(prefix[cc.Tag] + line)
+						if _, err := io.WriteString(writer, prefix[cc.Tag]+line); err != nil {
+							return err
+						}
 					}
 				}
 				break
 			}
 		}
 	}
-	return diffErr
+	return nil
 }
 
 // Like WriteContextDiff but returns the diff a string.
 func GetContextDiffString(diff ContextDiff) (string, error) {
-	w := &bytes.Buffer{}
-	err := WriteContextDiff(w, diff)
-	return string(w.Bytes()), err
+	var sb strings.Builder
+	err := WriteContextDiff(&sb, diff)
+	return sb.String(), err
 }
 
-// Split a string on "\n" while preserving them. The output can be used
+// SplitLines splits a string on "\n" while preserving them. The output can be used
 // as input for UnifiedDiff and ContextDiff structures.
 func SplitLines(s string) []string {
+	if s == "" {
+		return []string{}
+	}
 	lines := strings.SplitAfter(s, "\n")
-	lines[len(lines)-1] += "\n"
+	// If the last line doesn't end with a newline, add it
+	if len(lines) > 0 && !strings.HasSuffix(lines[len(lines)-1], "\n") {
+		lines[len(lines)-1] += "\n"
+	}
 	return lines
 }
